@@ -1,281 +1,14 @@
-class AdministrativeAssistant(KnowledgeSource):
-    """Knowledge source representing the Administrative Assistant"""
-    
-    def __init__(self):
-        super().__init__(ExpertRole.AA, "Administrative Assistant")
-        self.setup_rules()
-    
-    def setup_rules(self):
-        """Set up rules based on the AA's expertise"""
-        
-        # Rule 1: Identify unclear instructions
-        self.add_rule(Rule(
-            rule_id="AA_UNCLEAR_INSTRUCTIONS",
-            rule_type=RuleType.OPERATIONAL,
-            description="Identify when instructions for new directives are unclear",
-            source=self.role,
-            condition=lambda bb: any(
-                entry.entry_type == EntryType.DIRECTIVE
-                and entry.status == EntryStatus.NEW
-                for entry in bb.entries.values()
-            ),
-            action=lambda bb: self._check_instruction_clarity(bb)
-        ))
-        
-        # Rule 2: Report approval bottlenecks
-        self.add_rule(Rule(
-            rule_id="AA_APPROVAL_BOTTLENECKS",
-            rule_type=RuleType.OPERATIONAL,
-            description="Report when approvals are causing workflow bottlenecks",
-            source=self.role,
-            condition=lambda bb: any(
-                entry.entry_type == EntryType.ISSUE
-                and any(kw in entry.content.lower() for kw in ["approval", "sign", "authorize"])
-                and entry.status == EntryStatus.NEW
-                for entry in bb.entries.values()
-            ),
-            action=lambda bb: self._report_approval_bottlenecks(bb)
-        ))
-        
-        # Rule 3: Flag system and technical issues
-        self.add_rule(Rule(
-            rule_id="AA_SYSTEM_ISSUES",
-            rule_type=RuleType.OPERATIONAL,
-            description="Flag system and technical issues affecting workflow",
-            source=self.role,
-            condition=lambda bb: any(
-                entry.entry_type == EntryType.ISSUE
-                and any(kw in entry.content.lower() for kw in ["system", "technical", "it", "computer", "network", "internet"])
-                and entry.status == EntryStatus.NEW
-                for entry in bb.entries.values()
-            ),
-            action=lambda bb: self._report_system_issues(bb)
-        ))
-        
-        # Rule 4: Suggest procedural improvements
-        self.add_rule(Rule(
-            rule_id="AA_PROCEDURAL_IMPROVEMENTS",
-            rule_type=RuleType.OPERATIONAL,
-            description="Suggest improvements to daily operational procedures",
-            source=self.role,
-            condition=lambda bb: any(
-                entry.entry_type == EntryType.WORKFLOW_EXCEPTION
-                and entry.status == EntryStatus.NEW
-                for entry in bb.entries.values()
-            ),
-            action=lambda bb: self._suggest_procedural_improvements(bb)
-        ))
-        
-        # Rule 5: Request templates and examples
-        self.add_rule(Rule(
-            rule_id="AA_REQUEST_TEMPLATES",
-            rule_type=RuleType.OPERATIONAL,
-            description="Request templates and examples for new processes",
-            source=self.role,
-            condition=lambda bb: any(
-                entry.entry_type == EntryType.DIRECTIVE
-                and "new" in entry.content.lower()
-                and entry.status == EntryStatus.NEW
-                for entry in bb.entries.values()
-            ),
-            action=lambda bb: self._request_templates(bb)
-        ))
-    
-    def _check_instruction_clarity(self, blackboard: Blackboard) -> List[BlackboardEntry]:
-        """Check if instructions for new directives are clear"""
-        new_entries = []
-        
-        # Find new directives
-        new_directives = [
-            entry for entry in blackboard.entries.values()
-            if entry.entry_type == EntryType.DIRECTIVE
-            and entry.status == EntryStatus.NEW
-        ]
-        
-        for directive in new_directives:
-            # Check if the directive is clear (simple heuristic: longer instructions tend to be clearer)
-            is_clear = len(directive.content) > 100 and "step" in directive.content.lower()
-            
-            if not is_clear:
-                # Create an issue for unclear instructions
-                issue = BlackboardEntry(
-                    entry_id=f"issue_{uuid.uuid4()}",
-                    entry_type=EntryType.ISSUE,
-                    content=f"Unclear instructions in directive: {directive.content}",
-                    source=self.role,
-                    rule_id="AA_UNCLEAR_INSTRUCTIONS",
-                    status=EntryStatus.NEW,
-                    confidence=0.8,
-                    related_entries=[directive.entry_id],
-                    metadata={"issue_type": "clarity"}
-                )
-                new_entries.append(issue)
-                
-                # Create a question asking for clarification
-                question = BlackboardEntry(
-                    entry_id=f"question_{uuid.uuid4()}",
-                    entry_type=EntryType.QUESTION,
-                    content=f"Request for clarification: Can you provide step-by-step instructions for implementing this directive?",
-                    source=self.role,
-                    rule_id="AA_UNCLEAR_INSTRUCTIONS",
-                    status=EntryStatus.NEW,
-                    confidence=0.9,
-                    related_entries=[directive.entry_id, issue.entry_id],
-                    metadata={"question_type": "clarification"}
-                )
-                new_entries.append(question)
-            else:
-                # Mark the directive as clear and in processing
-                blackboard.update_entry(
-                    directive.entry_id,
-                    status=EntryStatus.PROCESSING
-                )
-        
-        return new_entries
-    
-    def _report_approval_bottlenecks(self, blackboard: Blackboard) -> List[BlackboardEntry]:
-        """Report when approvals are causing workflow bottlenecks"""
-        new_entries = []
-        
-        # Find approval-related issues
-        approval_issues = [
-            entry for entry in blackboard.entries.values()
-            if entry.entry_type == EntryType.ISSUE
-            and any(kw in entry.content.lower() for kw in ["approval", "sign", "authorize"])
-            and entry.status == EntryStatus.NEW
-        ]
-        
-        for issue in approval_issues:
-            # Create a workflow exception
-            exception = BlackboardEntry(
-                entry_id=f"exception_{uuid.uuid4()}",
-                entry_type=EntryType.WORKFLOW_EXCEPTION,
-                content=f"Approval bottleneck identified: {issue.content}",
-                source=self.role,
-                rule_id="AA_APPROVAL_BOTTLENECKS",
-                status=EntryStatus.NEW,
-                confidence=0.9,
-                related_entries=[issue.entry_id],
-                metadata={"bottleneck_type": "approval"}
-            )
-            new_entries.append(exception)
-            
-            # Suggest a solution
-            solution = BlackboardEntry(
-                entry_id=f"solution_{uuid.uuid4()}",
-                entry_type=EntryType.SOLUTION,
-                content=f"Implement delegated approval authority for routine matters and create a fast-track approval process for urgent items to address: {issue.content}",
-                source=self.role,
-                rule_id="AA_APPROVAL_BOTTLENECKS",
-                status=EntryStatus.RESOLVED,
-                confidence=0.7,
-                related_entries=[issue.entry_id, exception.entry_id],
-                metadata={"action": "delegated_approval"}
-            )
-            new_entries.append(solution)
-            
-            # Update the issue status
-            blackboard.update_entry(
-                issue.entry_id,
-                status=EntryStatus.PROCESSING
-            )
-        
-        return new_entries
-    
-    def _report_system_issues(self, blackboard: Blackboard) -> List[BlackboardEntry]:
-        """Flag system and technical issues affecting workflow"""
-        new_entries = []
-        
-        # Find system-related issues
-        system_issues = [
-            entry for entry in blackboard.entries.values()
-            if entry.entry_type == EntryType.ISSUE
-            and any(kw in entry.content.lower() for kw in ["system", "technical", "it", "computer", "network", "internet"])
-            and entry.status == EntryStatus.NEW
-        ]
-        
-        for issue in system_issues:
-            # Create a workflow exception
-            exception = BlackboardEntry(
-                entry_id=f"exception_{uuid.uuid4()}",
-                entry_type=EntryType.WORKFLOW_EXCEPTION,
-                content=f"System issue impacting workflow: {issue.content}",
-                source=self.role,
-                rule_id="AA_SYSTEM_ISSUES",
-                status=EntryStatus.NEW,
-                confidence=0.95,
-                related_entries=[issue.entry_id],
-                metadata={"bottleneck_type": "technical"}
-            )
-            new_entries.append(exception)
-            
-            # Create a resource request
-            request = BlackboardEntry(
-                entry_id=f"request_{uuid.uuid4()}",
-                entry_type=EntryType.RESOURCE_REQUEST,
-                content=f"Request IT support resources to resolve: {issue.content}",
-                source=self.role,
-                rule_id="AA_SYSTEM_ISSUES",
-                status=EntryStatus.NEW,
-                confidence=0.9,
-                related_entries=[issue.entry_id, exception.entry_id],
-                metadata={"resource_type": "it_support"}
-            )
-            new_entries.append(request)
-            
-            # Update the issue status
-            blackboard.update_entry(
-                issue.entry_id,
-                status=EntryStatus.PROCESSING
-            )
-        
-        return new_entries
-    
-    def _suggest_procedural_improvements(self, blackboard: Blackboard) -> List[BlackboardEntry]:
-        """Suggest improvements to daily operational procedures"""
-        new_entries = []
-        
-        # Find workflow exceptions
-        workflow_exceptions = [
-            entry for entry in blackboard.entries.values()
-            if entry.entry_type == EntryType.WORKFLOW_EXCEPTION
-            and entry.status == EntryStatus.NEW
-        ]
-        
-        for exception in workflow_exceptions:
-            # Create a solution with procedural improvement
-            solution = BlackboardEntry(
-                entry_id=f"solution_{uuid.uuid4()}",
-                entry_type=EntryType.SOLUTION,
-                content=f"Operational improvement: Create a formal exception handling process with clear escalation paths for: {exception.content}",
-                source=self.role,
-                rule_id="AA_PROCEDURAL_IMPROVEMENTS",
-                status=EntryStatus.RESOLVED,
-                confidence=0.8,
-                related_entries=[exception.entry_id],
-                metadata={"action": "procedure_improvement"}
-            )
-            new_entries.append(solution)
-            
-            # Update the exception status
-            blackboard.update_entry(
-                exception.entry_id,
-                status=EntryStatus.from abc import ABC, abstractmethod
-from enum import Enum, auto
-import logging
-import random
-import json
-from typing import Dict, List, Any, Optional, Set, Tuple
-import time
-from datetime import datetime, timedelta
-import copy
 import uuid
+import random
+import logging
+import copy
+from enum import Enum, auto
+from datetime import datetime, timedelta
+from typing import List, Dict, Any, Callable, Tuple, Set, Optional
+from abc import ABC, abstractmethod
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("BlackboardExpertSystem")
 
 # ------------------- ENUMS AND CONSTANTS -------------------
@@ -306,6 +39,7 @@ class EntryType(Enum):
     COMPLIANCE_CONCERN = auto()
     WORKFLOW_EXCEPTION = auto()
     DECISION = auto()
+    TASK = auto()  # Added TASK entry type
 
 class RuleType(Enum):
     """Types of rules in the system"""
@@ -498,46 +232,30 @@ class Blackboard:
 # ------------------- KNOWLEDGE SOURCE BASE CLASS -------------------
 
 class KnowledgeSource(ABC):
-    """Abstract base class for all knowledge sources"""
+    """Abstract base class for knowledge sources"""
     
     def __init__(self, role: ExpertRole, name: str):
         self.role = role
         self.name = name
         self.rules = []
-        self.priority = PRIORITY_LEVELS[role]
-        self.response_time = self._generate_response_time()
+        self.priority = 1.0  # Default priority
         self.last_activated = None
-    
-    def _generate_response_time(self) -> timedelta:
-        """Generate a realistic response time for this expert"""
-        # Base response time by role
-        base_times = {
-            ExpertRole.DDG: 15,  # DDG typically takes longer due to higher responsibilities
-            ExpertRole.CIA: 10,  # CIA has medium response time
-            ExpertRole.AA: 5     # Administrative assistants typically respond quickest
-        }
-        
-        # Add some randomness (±30%)
-        base = base_times[self.role]
-        variation = random.uniform(0.7, 1.3)
-        minutes = base * variation
-        
-        return timedelta(minutes=minutes)
-    
-    def is_available(self) -> bool:
-        """Check if this knowledge source is available to respond"""
-        if self.last_activated is None:
-            return True
-        
-        time_since_last = datetime.now() - self.last_activated
-        return time_since_last >= self.response_time
+        self.cooldown_period = timedelta(seconds=0)  # Changed from 5 to 0 to allow immediate reactivation
     
     def add_rule(self, rule: Rule) -> None:
         """Add a rule to this knowledge source"""
         self.rules.append(rule)
     
+    def is_available(self) -> bool:
+        """Check if this knowledge source is available to contribute"""
+        if self.last_activated is None:
+            return True
+        
+        time_since_last_activation = datetime.now() - self.last_activated
+        return time_since_last_activation >= self.cooldown_period
+    
     def get_applicable_rules(self, blackboard: Blackboard) -> List[Rule]:
-        """Get all rules that can be applied to the current blackboard state"""
+        """Get all rules that are applicable to the current blackboard state"""
         return [rule for rule in self.rules if rule.evaluate(blackboard)]
     
     def activate(self, blackboard: Blackboard) -> List[BlackboardEntry]:
@@ -566,16 +284,16 @@ class KnowledgeSource(ABC):
 # ------------------- CONTROL SHELL -------------------
 
 class ControlShell:
-    """Manages the activation of knowledge sources and conflict resolution"""
+    """Control shell that manages the reasoning process"""
     
     def __init__(self, blackboard: Blackboard, knowledge_sources: List[KnowledgeSource]):
         self.blackboard = blackboard
         self.knowledge_sources = knowledge_sources
         self.reasoning_cycles = 0
-        self.max_reasoning_cycles = 20
-        self.unaddressed_entries = set()  # Entries that haven't been addressed
+        self.max_reasoning_cycles = 10  # Increased from 5 to 10
         self.consecutive_cycles_without_changes = 0
         self.max_cycles_without_changes = 3
+        self.unaddressed_entries = set()
     
     def run_reasoning_cycle(self) -> bool:
         """Run a single reasoning cycle
@@ -596,8 +314,13 @@ class ControlShell:
         
         if not available_ks:
             logger.info("No knowledge sources available this cycle")
+            
+            # Force all knowledge sources to be available again
+            for ks in self.knowledge_sources:
+                ks.last_activated = None
+                
             self.consecutive_cycles_without_changes += 1
-            return True
+            return self._should_continue()
         
         # Sort by priority
         available_ks.sort(key=lambda ks: ks.priority, reverse=True)
@@ -633,16 +356,7 @@ class ControlShell:
             # Add the entry (or resolved version) to the blackboard
             self.blackboard.add_entry(entry)
         
-        # Check for entries that have been updated
-        for entry_id, entry in self.blackboard.entries.items():
-            if entry_id in initial_state:
-                old_entry = initial_state[entry_id]
-                if (entry.status != old_entry.status or 
-                    entry.content != old_entry.content or
-                    entry.confidence != old_entry.confidence):
-                    updated_entries_this_cycle.add(entry_id)
-        
-        # Update consecutive cycles without changes
+        # Check if there were any changes this cycle
         if new_entries_this_cycle or updated_entries_this_cycle:
             self.consecutive_cycles_without_changes = 0
         else:
@@ -903,21 +617,21 @@ class DeputyDirectorGeneral(KnowledgeSource):
     def setup_rules(self):
         """Set up rules based on the DDG's expertise"""
         
-        # Rule 1: Prioritize issues based on impact on public service delivery
+        # Rule 1: Prioritize service impact
         self.add_rule(Rule(
             rule_id="DDG_PRIORITIZE_SERVICE_IMPACT",
             rule_type=RuleType.STRATEGIC,
             description="Prioritize issues based on impact on public service delivery",
             source=self.role,
             condition=lambda bb: any(
-                entry.entry_type == EntryType.ISSUE 
+                entry.entry_type == EntryType.ISSUE
                 and entry.status == EntryStatus.NEW
                 for entry in bb.entries.values()
             ),
             action=lambda bb: self._prioritize_service_impact(bb)
         ))
         
-        # Rule 2: Address resource allocation issues
+        # Rule 2: Resource allocation
         self.add_rule(Rule(
             rule_id="DDG_RESOURCE_ALLOCATION",
             rule_type=RuleType.STRATEGIC,
@@ -931,7 +645,7 @@ class DeputyDirectorGeneral(KnowledgeSource):
             action=lambda bb: self._handle_resource_requests(bb)
         ))
         
-        # Rule 3: Create interdepartmental coordination for policy clarification
+        # Rule 3: Interdepartmental coordination
         self.add_rule(Rule(
             rule_id="DDG_COORDINATION_MEETINGS",
             rule_type=RuleType.STRATEGIC,
@@ -946,7 +660,7 @@ class DeputyDirectorGeneral(KnowledgeSource):
             action=lambda bb: self._setup_coordination_meetings(bb)
         ))
         
-        # Rule 4: Escalate critical compliance issues
+        # Rule 4: Escalate compliance issues
         self.add_rule(Rule(
             rule_id="DDG_ESCALATE_COMPLIANCE",
             rule_type=RuleType.STRATEGIC,
@@ -974,6 +688,20 @@ class DeputyDirectorGeneral(KnowledgeSource):
                 for entry in bb.entries.values()
             ),
             action=lambda bb: self._address_bureaucratic_inertia(bb)
+        ))
+        
+        # Rule 6: Handle workflow exceptions
+        self.add_rule(Rule(
+            rule_id="DDG_HANDLE_EXCEPTIONS",
+            rule_type=RuleType.STRATEGIC,
+            description="Handle workflow exceptions that require strategic decisions",
+            source=self.role,
+            condition=lambda bb: any(
+                entry.entry_type == EntryType.WORKFLOW_EXCEPTION
+                and entry.status == EntryStatus.NEW
+                for entry in bb.entries.values()
+            ),
+            action=lambda bb: self._handle_workflow_exceptions(bb)
         ))
     
     def _prioritize_service_impact(self, blackboard: Blackboard) -> List[BlackboardEntry]:
@@ -1170,3 +898,730 @@ class DeputyDirectorGeneral(KnowledgeSource):
             )
         
         return new_entries
+    
+    def _handle_workflow_exceptions(self, blackboard: Blackboard) -> List[BlackboardEntry]:
+        """Handle workflow exceptions that require strategic decisions"""
+        new_entries = []
+        
+        # Find workflow exceptions
+        exceptions = [
+            entry for entry in blackboard.entries.values()
+            if entry.entry_type == EntryType.WORKFLOW_EXCEPTION
+            and entry.status == EntryStatus.NEW
+        ]
+        
+        for exception in exceptions:
+            # Create a strategic decision
+            decision = BlackboardEntry(
+                entry_id=f"decision_{uuid.uuid4()}",
+                entry_type=EntryType.DECISION,
+                content=f"Strategic decision to address workflow exception: {exception.content}",
+                source=self.role,
+                rule_id="DDG_HANDLE_EXCEPTIONS",
+                status=EntryStatus.RESOLVED,
+                confidence=0.9,
+                related_entries=[exception.entry_id],
+                metadata={"decision_type": "strategic"}
+            )
+            new_entries.append(decision)
+            
+            # Update the exception status
+            blackboard.update_entry(
+                exception.entry_id,
+                status=EntryStatus.PROCESSING
+            )
+        
+        return new_entries
+
+class AdministrativeAssistant(KnowledgeSource):
+    """Knowledge source representing the Administrative Assistant"""
+    
+    def __init__(self):
+        super().__init__(ExpertRole.AA, "Administrative Assistant")
+        self.setup_rules()
+    
+    def setup_rules(self):
+        """Set up rules based on the AA's expertise"""
+        
+        # Rule 1: Report when approvals are causing workflow bottlenecks
+        self.add_rule(Rule(
+            rule_id="AA_APPROVAL_BOTTLENECKS",
+            rule_type=RuleType.OPERATIONAL,
+            description="Report when approvals are causing workflow bottlenecks",
+            source=self.role,
+            condition=lambda bb: any(
+                entry.entry_type == EntryType.ISSUE
+                and any(kw in entry.content.lower() for kw in ["approval", "sign", "authorize"])
+                and entry.status == EntryStatus.NEW
+                for entry in bb.entries.values()
+            ),
+            action=lambda bb: self._report_approval_bottlenecks(bb)
+        ))
+        
+        # Rule 2: Handle routine administrative tasks
+        self.add_rule(Rule(
+            rule_id="AA_ROUTINE_TASKS",
+            rule_type=RuleType.OPERATIONAL,
+            description="Address routine administrative tasks",
+            source=self.role,
+            condition=lambda bb: any(
+                entry.entry_type == EntryType.TASK
+                and entry.status == EntryStatus.NEW
+                for entry in bb.entries.values()
+            ),
+            action=lambda bb: self._handle_routine_tasks(bb)
+        ))
+        
+        # Rule 3: Suggest improvements to daily operational procedures
+        self.add_rule(Rule(
+            rule_id="AA_PROCEDURAL_IMPROVEMENTS",
+            rule_type=RuleType.OPERATIONAL,
+            description="Suggest improvements to daily operational procedures",
+            source=self.role,
+            condition=lambda bb: any(
+                entry.entry_type == EntryType.WORKFLOW_EXCEPTION
+                and entry.status == EntryStatus.NEW
+                for entry in bb.entries.values()
+            ),
+            action=lambda bb: self._suggest_procedural_improvements(bb)
+        ))
+        
+        # Rule 4: Request templates and examples for new processes
+        self.add_rule(Rule(
+            rule_id="AA_REQUEST_TEMPLATES",
+            rule_type=RuleType.OPERATIONAL,
+            description="Request templates and examples for new processes",
+            source=self.role,
+            condition=lambda bb: any(
+                entry.entry_type == EntryType.DIRECTIVE
+                and "new" in entry.content.lower()
+                and entry.status == EntryStatus.NEW
+                for entry in bb.entries.values()
+            ),
+            action=lambda bb: self._request_templates(bb)
+        ))
+        
+        # Rule 5: Document compliance requirements
+        self.add_rule(Rule(
+            rule_id="AA_DOCUMENT_COMPLIANCE",
+            rule_type=RuleType.OPERATIONAL,
+            description="Document compliance requirements for new policies",
+            source=self.role,
+            condition=lambda bb: any(
+                entry.entry_type == EntryType.COMPLIANCE_CONCERN
+                and entry.status == EntryStatus.NEW
+                for entry in bb.entries.values()
+            ),
+            action=lambda bb: self._document_compliance_requirements(bb)
+        ))
+    
+    def _report_approval_bottlenecks(self, blackboard: Blackboard) -> List[BlackboardEntry]:
+        """Report when approvals are causing workflow bottlenecks"""
+        new_entries = []
+        
+        # Find approval-related issues
+        approval_issues = [
+            entry for entry in blackboard.entries.values()
+            if entry.entry_type == EntryType.ISSUE
+            and any(kw in entry.content.lower() for kw in ["approval", "sign", "authorize"])
+            and entry.status == EntryStatus.NEW
+        ]
+        
+        for issue in approval_issues:
+            # Create a solution with streamlined approval process
+            solution = BlackboardEntry(
+                entry_id=f"solution_{uuid.uuid4()}",
+                entry_type=EntryType.SOLUTION,
+                content=f"Streamline approval process by implementing: 1) Delegation of authority for routine approvals, 2) Digital approval system, 3) Parallel processing where possible for: {issue.content}",
+                source=self.role,
+                rule_id="AA_APPROVAL_BOTTLENECKS",
+                status=EntryStatus.RESOLVED,
+                confidence=0.85,
+                related_entries=[issue.entry_id],
+                metadata={"action": "streamline_approvals"}
+            )
+            new_entries.append(solution)
+            
+            # Create a workflow exception entry
+            exception = BlackboardEntry(
+                entry_id=f"exception_{uuid.uuid4()}",
+                entry_type=EntryType.WORKFLOW_EXCEPTION,
+                content=f"Current approval process creates bottlenecks and delays in: {issue.content}",
+                source=self.role,
+                rule_id="AA_APPROVAL_BOTTLENECKS",
+                status=EntryStatus.NEW,
+                confidence=0.9,
+                related_entries=[issue.entry_id],
+                metadata={"exception_type": "approval_bottleneck"}
+            )
+            new_entries.append(exception)
+            
+            # Update the issue status
+            blackboard.update_entry(
+                issue.entry_id,
+                status=EntryStatus.PROCESSING
+            )
+        
+        return new_entries
+    
+    def _document_compliance_requirements(self, blackboard: Blackboard) -> List[BlackboardEntry]:
+        """Document compliance requirements for new policies"""
+        new_entries = []
+        
+        # Find compliance concerns
+        compliance_concerns = [
+            entry for entry in blackboard.entries.values()
+            if entry.entry_type == EntryType.COMPLIANCE_CONCERN
+            and entry.status == EntryStatus.NEW
+        ]
+        
+        for concern in compliance_concerns:
+            # Create a documentation task
+            task = BlackboardEntry(
+                entry_id=f"task_{uuid.uuid4()}",
+                entry_type=EntryType.TASK,
+                content=f"Document compliance requirements and create checklist for: {concern.content}",
+                source=self.role,
+                rule_id="AA_DOCUMENT_COMPLIANCE",
+                status=EntryStatus.NEW,
+                confidence=0.9,
+                related_entries=[concern.entry_id],
+                metadata={"task_type": "documentation"}
+            )
+            new_entries.append(task)
+            
+            # Update the concern status
+            blackboard.update_entry(
+                concern.entry_id,
+                status=EntryStatus.PROCESSING
+            )
+        
+        return new_entries
+    
+    def _handle_routine_tasks(self, blackboard: Blackboard) -> List[BlackboardEntry]:
+        """Address routine administrative tasks"""
+        new_entries = []
+        
+        # Find all NEW tasks
+        tasks = [
+            entry for entry in blackboard.entries.values()
+            if entry.entry_type == EntryType.TASK and entry.status == EntryStatus.NEW
+        ]
+        
+        for task in tasks:
+            # Create a solution for the task
+            solution = BlackboardEntry(
+                entry_id=f"solution_{uuid.uuid4()}",
+                entry_type=EntryType.SOLUTION,
+                content=f"Routine task handled: {task.content}",
+                source=self.role,
+                rule_id="AA_ROUTINE_TASKS",
+                status=EntryStatus.RESOLVED,
+                confidence=0.95,
+                related_entries=[task.entry_id],
+                metadata={"action": "task_completion"}
+            )
+            new_entries.append(solution)
+            
+            # Update the task status
+            blackboard.update_entry(
+                task.entry_id,
+                status=EntryStatus.RESOLVED
+            )
+        
+        return new_entries
+    
+    def _suggest_procedural_improvements(self, blackboard: Blackboard) -> List[BlackboardEntry]:
+        """Suggest improvements to daily operational procedures"""
+        new_entries = []
+        
+        # Find workflow exceptions
+        workflow_exceptions = [
+            entry for entry in blackboard.entries.values()
+            if entry.entry_type == EntryType.WORKFLOW_EXCEPTION
+            and entry.status == EntryStatus.NEW
+        ]
+        
+        for exception in workflow_exceptions:
+            # Create a solution with procedural improvement
+            solution = BlackboardEntry(
+                entry_id=f"solution_{uuid.uuid4()}",
+                entry_type=EntryType.SOLUTION,
+                content=f"Operational improvement: Create a formal exception handling process with clear escalation paths for: {exception.content}",
+                source=self.role,
+                rule_id="AA_PROCEDURAL_IMPROVEMENTS",
+                status=EntryStatus.RESOLVED,
+                confidence=0.8,
+                related_entries=[exception.entry_id],
+                metadata={"action": "procedure_improvement"}
+            )
+            new_entries.append(solution)
+            
+            # Update the exception status
+            blackboard.update_entry(
+                exception.entry_id,
+                status=EntryStatus.PROCESSING
+            )
+            
+            # Create a directive for implementation
+            directive = BlackboardEntry(
+                entry_id=f"directive_{uuid.uuid4()}",
+                entry_type=EntryType.DIRECTIVE,
+                content=f"Implement standardized procedure for handling: {exception.content}",
+                source=self.role,
+                rule_id="AA_PROCEDURAL_IMPROVEMENTS",
+                status=EntryStatus.NEW,
+                confidence=0.75,
+                related_entries=[exception.entry_id, solution.entry_id],
+                metadata={"action_type": "standardization"}
+            )
+            new_entries.append(directive)
+        
+        return new_entries
+    
+    def _request_templates(self, blackboard: Blackboard) -> List[BlackboardEntry]:
+        """Request templates and examples for new processes"""
+        new_entries = []
+        
+        # Find new directives that mention new processes
+        new_process_directives = [
+            entry for entry in blackboard.entries.values()
+            if entry.entry_type == EntryType.DIRECTIVE
+            and "new" in entry.content.lower()
+            and entry.status == EntryStatus.NEW
+        ]
+        
+        for directive in new_process_directives:
+            # Create a resource request for templates
+            request = BlackboardEntry(
+                entry_id=f"request_{uuid.uuid4()}",
+                entry_type=EntryType.RESOURCE_REQUEST,
+                content=f"Request for templates and examples to implement: {directive.content}",
+                source=self.role,
+                rule_id="AA_REQUEST_TEMPLATES",
+                status=EntryStatus.NEW,
+                confidence=0.85,
+                related_entries=[directive.entry_id],
+                metadata={"request_type": "templates"}
+            )
+            new_entries.append(request)
+            
+            # Update the directive status
+            blackboard.update_entry(
+                directive.entry_id,
+                status=EntryStatus.PROCESSING
+            )
+        
+        return new_entries
+
+class ChiefInternalAuditor(KnowledgeSource):
+    """Knowledge source representing the Chief Internal Auditor"""
+    
+    def __init__(self):
+        super().__init__(ExpertRole.CIA, "Chief Internal Auditor")
+        self.setup_rules()
+    
+    def setup_rules(self):
+        """Set up rules based on the CIA's expertise"""
+        
+        # Rule 1: Identify compliance risks
+        self.add_rule(Rule(
+            rule_id="CIA_COMPLIANCE_RISKS",
+            rule_type=RuleType.COMPLIANCE,  # Changed from REGULATORY to COMPLIANCE
+            description="Identify compliance risks in new directives",
+            source=self.role,
+            condition=lambda bb: any(
+                entry.entry_type == EntryType.DIRECTIVE
+                and entry.status in [EntryStatus.NEW, EntryStatus.PROCESSING]
+                for entry in bb.entries.values()
+            ),
+            action=lambda bb: self._identify_compliance_risks(bb)
+        ))
+        
+        # Rule 2: Evaluate control effectiveness
+        self.add_rule(Rule(
+            rule_id="CIA_CONTROL_EFFECTIVENESS",
+            rule_type=RuleType.COMPLIANCE,  # Changed from REGULATORY to COMPLIANCE
+            description="Evaluate effectiveness of existing controls",
+            source=self.role,
+            condition=lambda bb: any(
+                entry.entry_type == EntryType.SOLUTION
+                and entry.status == EntryStatus.RESOLVED
+                for entry in bb.entries.values()
+            ),
+            action=lambda bb: self._evaluate_control_effectiveness(bb)
+        ))
+        
+        # Rule 3: Recommend audit procedures
+        self.add_rule(Rule(
+            rule_id="CIA_AUDIT_PROCEDURES",
+            rule_type=RuleType.COMPLIANCE,  # Changed from REGULATORY to COMPLIANCE
+            description="Recommend audit procedures for new processes",
+            source=self.role,
+            condition=lambda bb: any(
+                entry.entry_type == EntryType.DIRECTIVE
+                and "new" in entry.content.lower()
+                and entry.status in [EntryStatus.NEW, EntryStatus.PROCESSING]
+                for entry in bb.entries.values()
+            ),
+            action=lambda bb: self._recommend_audit_procedures(bb)
+        ))
+        
+        # Rule 4: Flag potential fraud risks
+        self.add_rule(Rule(
+            rule_id="CIA_FRAUD_RISKS",
+            rule_type=RuleType.COMPLIANCE,  # Changed from REGULATORY to COMPLIANCE
+            description="Flag potential fraud risks in processes",
+            source=self.role,
+            condition=lambda bb: any(
+                (entry.entry_type == EntryType.SOLUTION or entry.entry_type == EntryType.DIRECTIVE)
+                and any(kw in entry.content.lower() for kw in ["approval", "payment", "finance", "budget", "resource"])
+                for entry in bb.entries.values()
+            ),
+            action=lambda bb: self._flag_fraud_risks(bb)
+        ))
+        
+        # Rule 5: Ensure segregation of duties
+        self.add_rule(Rule(
+            rule_id="CIA_SEGREGATION_DUTIES",
+            rule_type=RuleType.COMPLIANCE,  # Changed from REGULATORY to COMPLIANCE
+            description="Ensure proper segregation of duties in processes",
+            source=self.role,
+            condition=lambda bb: any(
+                entry.entry_type == EntryType.SOLUTION
+                and any(kw in entry.content.lower() for kw in ["process", "procedure", "workflow", "approval"])
+                and entry.status == EntryStatus.RESOLVED
+                for entry in bb.entries.values()
+            ),
+            action=lambda bb: self._ensure_segregation_duties(bb)
+        ))
+    
+    def _identify_compliance_risks(self, blackboard: Blackboard) -> List[BlackboardEntry]:
+        """Identify compliance risks in new directives"""
+        new_entries = []
+        
+        # Find relevant directives
+        directives = [
+            entry for entry in blackboard.entries.values()
+            if entry.entry_type == EntryType.DIRECTIVE
+            and entry.status in [EntryStatus.NEW, EntryStatus.PROCESSING]
+        ]
+        
+        for directive in directives:
+            # Check for compliance risk keywords
+            compliance_risk = any(kw in directive.content.lower() 
+                                for kw in ["regulation", "compliance", "legal", "requirement", "policy", "standard"])
+            
+            if compliance_risk:
+                # Create a compliance concern
+                concern = BlackboardEntry(
+                    entry_id=f"concern_{uuid.uuid4()}",
+                    entry_type=EntryType.COMPLIANCE_CONCERN,
+                    content=f"Potential compliance risk identified in: {directive.content}",
+                    source=self.role,
+                    rule_id="CIA_COMPLIANCE_RISKS",
+                    status=EntryStatus.NEW,
+                    confidence=0.85,
+                    related_entries=[directive.entry_id],
+                    metadata={"risk_type": "compliance"}
+                )
+                new_entries.append(concern)
+                
+                # Create a solution with compliance recommendations
+                solution = BlackboardEntry(
+                    entry_id=f"solution_{uuid.uuid4()}",
+                    entry_type=EntryType.SOLUTION,
+                    content=f"Conduct a formal compliance review before implementation and document all regulatory requirements for: {directive.content}",
+                    source=self.role,
+                    rule_id="CIA_COMPLIANCE_RISKS",
+                    status=EntryStatus.RESOLVED,
+                    confidence=0.8,
+                    related_entries=[directive.entry_id, concern.entry_id],
+                    metadata={"action": "compliance_review"}
+                )
+                new_entries.append(solution)
+            
+        return new_entries
+    
+    def _evaluate_control_effectiveness(self, blackboard: Blackboard) -> List[BlackboardEntry]:
+        """Evaluate effectiveness of existing controls"""
+        new_entries = []
+        
+        # Find resolved solutions
+        solutions = [
+            entry for entry in blackboard.entries.values()
+            if entry.entry_type == EntryType.SOLUTION
+            and entry.status == EntryStatus.RESOLVED
+        ]
+        
+        for solution in solutions:
+            # Evaluate if the solution has adequate controls
+            has_controls = any(kw in solution.content.lower() 
+                             for kw in ["monitor", "control", "review", "check", "verify", "audit", "oversight"])
+            
+            if not has_controls:
+                # Create a compliance concern
+                concern = BlackboardEntry(
+                    entry_id=f"concern_{uuid.uuid4()}",
+                    entry_type=EntryType.COMPLIANCE_CONCERN,
+                    content=f"Inadequate control mechanisms in proposed solution: {solution.content}",
+                    source=self.role,
+                    rule_id="CIA_CONTROL_EFFECTIVENESS",
+                    status=EntryStatus.NEW,
+                    confidence=0.9,
+                    related_entries=[solution.entry_id],
+                    metadata={"issue_type": "control_weakness"}
+                )
+                new_entries.append(concern)
+                
+                # Create an improved solution
+                improved_solution = BlackboardEntry(
+                    entry_id=f"solution_{uuid.uuid4()}",
+                    entry_type=EntryType.SOLUTION,
+                    content=f"Enhance solution with monitoring and control mechanisms: {solution.content}",
+                    source=self.role,
+                    rule_id="CIA_CONTROL_EFFECTIVENESS",
+                    status=EntryStatus.RESOLVED,
+                    confidence=0.85,
+                    related_entries=[solution.entry_id, concern.entry_id],
+                    metadata={"action": "enhance_controls"}
+                )
+                new_entries.append(improved_solution)
+            
+        return new_entries
+    
+    def _recommend_audit_procedures(self, blackboard: Blackboard) -> List[BlackboardEntry]:
+        """Recommend audit procedures for new processes"""
+        new_entries = []
+        
+        # Find new process directives
+        new_process_directives = [
+            entry for entry in blackboard.entries.values()
+            if entry.entry_type == EntryType.DIRECTIVE
+            and "new" in entry.content.lower()
+            and entry.status in [EntryStatus.NEW, EntryStatus.PROCESSING]
+        ]
+        
+        for directive in new_process_directives:
+            # Create audit procedure recommendations
+            solution = BlackboardEntry(
+                entry_id=f"solution_{uuid.uuid4()}",
+                entry_type=EntryType.SOLUTION,
+                content=f"Implement the following audit procedures for {directive.content}: 1) Document process flows, 2) Identify key control points, 3) Establish regular compliance checks, 4) Create audit trails for all transactions",
+                source=self.role,
+                rule_id="CIA_AUDIT_PROCEDURES",
+                status=EntryStatus.RESOLVED,
+                confidence=0.9,
+                related_entries=[directive.entry_id],
+                metadata={"action": "audit_procedures"}
+            )
+            new_entries.append(solution)
+            
+            # Create a directive for implementation
+            audit_directive = BlackboardEntry(
+                entry_id=f"directive_{uuid.uuid4()}",
+                entry_type=EntryType.DIRECTIVE,
+                content=f"Establish audit framework before implementing: {directive.content}",
+                source=self.role,
+                rule_id="CIA_AUDIT_PROCEDURES",
+                status=EntryStatus.NEW,
+                confidence=0.85,
+                related_entries=[directive.entry_id, solution.entry_id],
+                metadata={"action_type": "audit_framework"}
+            )
+            new_entries.append(audit_directive)
+            
+        return new_entries
+    
+    def _flag_fraud_risks(self, blackboard: Blackboard) -> List[BlackboardEntry]:
+        """Flag potential fraud risks in processes"""
+        new_entries = []
+        
+        # Find entries related to financial processes
+        financial_entries = [
+            entry for entry in blackboard.entries.values()
+            if (entry.entry_type == EntryType.SOLUTION or entry.entry_type == EntryType.DIRECTIVE)
+            and any(kw in entry.content.lower() for kw in ["approval", "payment", "finance", "budget", "resource"])
+        ]
+        
+        for entry in financial_entries:
+            # Check for fraud prevention measures
+            has_fraud_prevention = any(kw in entry.content.lower() 
+                                     for kw in ["verify", "validate", "authenticate", "authorize", "dual control"])
+            
+            if not has_fraud_prevention:
+                # Create a compliance concern
+                concern = BlackboardEntry(
+                    entry_id=f"concern_{uuid.uuid4()}",
+                    entry_type=EntryType.COMPLIANCE_CONCERN,
+                    content=f"Potential fraud risk identified in: {entry.content}",
+                    source=self.role,
+                    rule_id="CIA_FRAUD_RISKS",
+                    status=EntryStatus.NEW,
+                    confidence=0.9,
+                    related_entries=[entry.entry_id],
+                    metadata={"risk_type": "fraud"}
+                )
+                new_entries.append(concern)
+                
+                # Create a solution with fraud prevention measures
+                solution = BlackboardEntry(
+                    entry_id=f"solution_{uuid.uuid4()}",
+                    entry_type=EntryType.SOLUTION,
+                    content=f"Implement fraud prevention measures: 1) Dual control for approvals, 2) Verification of requests, 3) Regular audits, 4) Separation of duties for: {entry.content}",
+                    source=self.role,
+                    rule_id="CIA_FRAUD_RISKS",
+                    status=EntryStatus.RESOLVED,
+                    confidence=0.85,
+                    related_entries=[entry.entry_id, concern.entry_id],
+                    metadata={"action": "fraud_prevention"}
+                )
+                new_entries.append(solution)
+            
+        return new_entries
+    
+    def _ensure_segregation_duties(self, blackboard: Blackboard) -> List[BlackboardEntry]:
+        """Ensure proper segregation of duties in processes"""
+        new_entries = []
+        
+        # Find process-related solutions
+        process_solutions = [
+            entry for entry in blackboard.entries.values()
+            if entry.entry_type == EntryType.SOLUTION
+            and any(kw in entry.content.lower() for kw in ["process", "procedure", "workflow", "approval"])
+            and entry.status == EntryStatus.RESOLVED
+        ]
+        
+        for solution in process_solutions:
+            # Check for segregation of duties
+            has_segregation = "segregation" in solution.content.lower() or "separation of duties" in solution.content.lower()
+            
+            if not has_segregation:
+                # Create a compliance concern
+                concern = BlackboardEntry(
+                    entry_id=f"concern_{uuid.uuid4()}",
+                    entry_type=EntryType.COMPLIANCE_CONCERN,
+                    content=f"Lack of segregation of duties in: {solution.content}",
+                    source=self.role,
+                    rule_id="CIA_SEGREGATION_DUTIES",
+                    status=EntryStatus.NEW,
+                    confidence=0.9,
+                    related_entries=[solution.entry_id],
+                    metadata={"issue_type": "segregation"}
+                )
+                new_entries.append(concern)
+                
+                # Create an improved solution
+                improved_solution = BlackboardEntry(
+                    entry_id=f"solution_{uuid.uuid4()}",
+                    entry_type=EntryType.SOLUTION,
+                    content=f"Enhance with proper segregation of duties: Ensure that the same person cannot initiate, approve, and review actions in: {solution.content}",
+                    source=self.role,
+                    rule_id="CIA_SEGREGATION_DUTIES",
+                    status=EntryStatus.RESOLVED,
+                    confidence=0.8,
+                    related_entries=[solution.entry_id, concern.entry_id],
+                    metadata={"action": "segregation_of_duties"}
+                )
+                new_entries.append(improved_solution)
+            
+        return new_entries
+
+def main():
+    """Main function to demonstrate the blackboard expert system"""
+    logger.info("Starting Blackboard Expert System for Policy Implementation")
+    
+    # Create the blackboard
+    blackboard = Blackboard()
+    
+    # Create knowledge sources
+    ddg = DeputyDirectorGeneral()
+    cia = ChiefInternalAuditor()
+    aa = AdministrativeAssistant()
+    
+    # Create the control shell
+    control_shell = ControlShell(blackboard, [ddg, cia, aa])
+    
+    # Add initial entries to the blackboard
+    
+    # Issue 1: Approval bottleneck
+    blackboard.add_entry(BlackboardEntry(
+        entry_id=f"issue_{uuid.uuid4()}",
+        entry_type=EntryType.ISSUE,
+        content="Approval process for procurement requests takes too long, causing delays in project implementation",
+        source=ExpertRole.AA,
+        rule_id=None,
+        status=EntryStatus.NEW,
+        confidence=0.9,
+        related_entries=[],
+        metadata={"issue_type": "process_delay"}
+    ))
+    
+    # Issue 2: Resource allocation
+    blackboard.add_entry(BlackboardEntry(
+        entry_id=f"issue_{uuid.uuid4()}",
+        entry_type=EntryType.ISSUE,
+        content="Shortage of IT resources for implementing the new digital signature system",
+        source=ExpertRole.DDG,
+        rule_id=None,
+        status=EntryStatus.NEW,
+        confidence=0.85,
+        related_entries=[],
+        metadata={"issue_type": "resource_shortage"}
+    ))
+    
+    # Directive 1: New compliance requirement
+    blackboard.add_entry(BlackboardEntry(
+        entry_id=f"directive_{uuid.uuid4()}",
+        entry_type=EntryType.DIRECTIVE,
+        content="Implement new data protection policy in accordance with updated regulations",
+        source=ExpertRole.DDG,
+        rule_id=None,
+        status=EntryStatus.NEW,
+        confidence=0.95,
+        related_entries=[],
+        metadata={"directive_type": "compliance"}
+    ))
+    
+    # Directive 2: Process improvement
+    blackboard.add_entry(BlackboardEntry(
+        entry_id=f"directive_{uuid.uuid4()}",
+        entry_type=EntryType.DIRECTIVE,
+        content="Create new streamlined process for budget approval to reduce bureaucratic delays",
+        source=ExpertRole.DDG,
+        rule_id=None,
+        status=EntryStatus.NEW,
+        confidence=0.9,
+        related_entries=[],
+        metadata={"directive_type": "process_improvement"}
+    ))
+    
+    # Run the system to completion
+    control_shell.run_to_completion()
+    
+    # Print final summary
+    print("\n=== FINAL SYSTEM STATE ===")
+    print(f"Total entries: {len(blackboard.entries)}")
+    print(f"Reasoning cycles: {control_shell.reasoning_cycles}")
+    
+    # Count entries by type
+    type_counts = {}
+    for entry_type in EntryType:
+        count = len(blackboard.get_entries_by_type(entry_type))
+        if count > 0:
+            type_counts[entry_type] = count
+    
+    print("\nEntries by type:")
+    for entry_type, count in type_counts.items():
+        print(f"- {entry_type.name}: {count}")
+
+if __name__ == "__main__":
+    import time  # Add time import for sleep function
+    main()
+
+
+
+
+
+
+
